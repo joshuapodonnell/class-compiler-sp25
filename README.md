@@ -7,6 +7,12 @@ Changes won't necessarily be purely additive, so
 you may want to look at the commit history 
 if you want a point-in-time snapshot.
 
+## Unofficial Install Guide
+
+```
+opam install ppx_deriving 
+```
+
 ## Our first compiler!
 
 How to see the assembly for the C program:

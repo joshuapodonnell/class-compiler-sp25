@@ -3,3 +3,6 @@ program
 program.s
 *.o
 _build
+runtime/*.o
+.merlin
+/output/
