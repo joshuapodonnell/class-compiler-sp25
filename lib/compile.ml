@@ -1,10 +1,31 @@
+open S_exp
+open Asm
+
+let rec compile_exp (exp: s_exp): directive list = 
+  match exp with 
+  Num n -> [ Mov (Reg Rax, Imm n); ] 
+  | Lst [Sym "add1"; l] -> 
+    let p = compile_exp l in
+    p @ [ Add (Reg Rax, Imm 1)]
+  | Lst [Sym "sub1"; l] -> 
+    let p = compile_exp l in
+    p @ [ Sub (Reg Rax, Imm 1)]
+  | _ -> failwith "i dont know"
+
+let compile_fun (exp: s_exp): directive list =
+  let directives = compile_exp exp in
+  [ Global "entry"; Label "entry" ] @ directives @ [ Ret ] 
+
 let compile (program: string) : string =
-  String.concat "\n" [
-    "global _entry";
-    "_entry:";
-    Printf.sprintf "    mov rax, %s" program;
-    "    ret"
-  ]
+  let sexp = parse program in
+  compile_fun sexp |> List.map string_of_directive |> String.concat "\n"
+
+(* these should all run *)
+let p1 = Num 7
+let p2 = Num 1000
+let p3 = Lst [Sym "add1"; Num 7]
+let p4 = Lst [Sym "add1"; Lst [Sym "sub1"; Num 8]]
+
 
 let compile_to_file (program: string): unit = 
   let file = open_out "program.s" in
