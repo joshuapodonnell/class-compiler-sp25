@@ -20,13 +20,6 @@ let compile (program: string) : string =
   let sexp = parse program in
   compile_fun sexp |> List.map string_of_directive |> String.concat "\n"
 
-(* these should all run *)
-let p1 = Num 7
-let p2 = Num 1000
-let p3 = Lst [Sym "add1"; Num 7]
-let p4 = Lst [Sym "add1"; Lst [Sym "sub1"; Num 8]]
-
-
 let compile_to_file (program: string): unit = 
   let file = open_out "program.s" in
   output_string file (compile program);
@@ -39,3 +32,15 @@ let compile_and_run (program: string): string =
   let input = Unix.open_process_in "./a.out" in
   let response = input_line input in
   close_in input; response
+
+open Interp
+
+let difftest (programs: string list): bool = 
+  let result_pairs = List.map (fun p -> (compile_and_run p, interp p)) programs in
+  List.for_all (fun (r1, r2) -> r1 = r2) result_pairs
+
+let test () = difftest [
+  "42";
+  "(add1 (sub1 42))";
+  "(add1 (add1 (sub1 1)))";
+]
