@@ -13,4 +13,18 @@ For [utop history](https://github.com/ocaml-community/utop/issues/478): `mkdir -
 
 ## How to run
 
-To run, do `dune utop`, then `open Cs164.Compile`, then `compile_and_run "50"`. 
+```sh
+# to run the tests
+dune runtest -f
+
+# to run the interpreter...
+# on a string
+dune exec bin/interp.exe -- -e "(add1 5)"
+# or on a file
+dune exec bin/interp.exe examples/unary-nums.lisp 
+
+
+# to run the compiler
+# it puts the executable and assembly in directory "output/"
+dune exec bin/compile.exe examples/unary-nums.lisp output/
+```

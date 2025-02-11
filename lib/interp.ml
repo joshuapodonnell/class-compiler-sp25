@@ -22,5 +22,4 @@ let rec interp_exp (exp: s_exp): value =
   (* not handling all the bool cases yet *)
   | _ -> failwith "i dont know"
 
-let interp (program: string): string =
-  parse program |> interp_exp |> string_of_value
+let interp (program: s_exp): string = interp_exp program |> string_of_value
