@@ -1,12 +1,10 @@
 open S_exp
+open Shared.Error
 
 type value = Number of int | Boolean of bool
 
 let int_of_value (v : value) : int =
   match v with Number n -> n | Boolean _ -> failwith "boolean!"
-
-let string_of_value (v : value) : string =
-  match v with Number n -> string_of_int n | Boolean b -> string_of_bool b
 
 let rec interp_exp (exp : s_exp) : value =
   match exp with
@@ -24,6 +22,18 @@ let rec interp_exp (exp : s_exp) : value =
   | Lst [ Sym "if"; e_cond; e_then; e_else ] ->
       let v_cond = interp_exp e_cond in
       if v_cond = Boolean false then interp_exp e_else else interp_exp e_then
-  | _ -> failwith "i dont know"
+  | Lst [ Sym "+"; e1; e2 ] ->
+      Number (int_of_value (interp_exp e1) + int_of_value (interp_exp e2))
+  | Lst [ Sym "-"; e1; e2 ] ->
+      Number (int_of_value (interp_exp e1) - int_of_value (interp_exp e2))
+  | Lst [ Sym "="; e1; e2 ] -> Boolean (interp_exp e1 = interp_exp e2)
+  | Lst [ Sym "<"; e1; e2 ] -> (
+      match (interp_exp e1, interp_exp e2) with
+      | Number n1, Number n2 -> Boolean (n1 < n2)
+      | _ -> raise (Stuck exp))
+  | _ -> raise (Stuck exp)
+
+let string_of_value (v : value) : string =
+  match v with Number n -> string_of_int n | Boolean b -> string_of_bool b
 
 let interp (program : s_exp) : string = interp_exp program |> string_of_value

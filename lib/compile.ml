@@ -22,6 +22,13 @@ let zf_to_bool =
     Or (Reg Rax, Imm bool_tag);
   ]
 
+let gensym : string -> string =
+  let counter = ref 0 in
+  fun s ->
+    let symbol = Printf.sprintf "%s__%d" s !counter in
+    counter := !counter + 1;
+    symbol
+
 let rec compile_exp (exp : s_exp) : directive list =
   match exp with
   | Num n -> [ Mov (Reg Rax, operand_of_num n) ]
@@ -41,6 +48,18 @@ let rec compile_exp (exp : s_exp) : directive list =
       compile_exp l
       @ [ And (Reg Rax, Imm num_mask); Cmp (Reg Rax, Imm num_tag) ]
       @ zf_to_bool
+  | Lst [ Sym "if"; e_cond; e_then; e_else ] ->
+      let else_label = gensym "else" in
+      let cont_label = gensym "continue" in
+      compile_exp e_cond
+      @ [ Cmp (Reg Rax, operand_of_bool false); Je else_label ]
+      @ compile_exp e_then @ [ Jmp cont_label ] @ [ Label else_label ]
+      @ compile_exp e_else @ [ Label cont_label ]
+  | Lst [ Sym "+"; e1; e2 ] ->
+      compile_exp e1
+      @ [ Mov (Reg R8, Reg Rax) ]
+      @ compile_exp e2
+      @ [ Add (Reg Rax, Reg R8) ]
   | _ -> failwith "i dont know"
 
 let compile (exp : s_exp) : directive list =
