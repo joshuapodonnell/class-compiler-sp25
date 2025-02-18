@@ -1,6 +1,7 @@
 open Shared
 open S_exp
 open Directive
+open Util
 
 let num_shift = 2
 let num_mask = 0b11
@@ -22,46 +23,77 @@ let zf_to_bool =
     Or (Reg Rax, Imm bool_tag);
   ]
 
-let gensym : string -> string =
-  let counter = ref 0 in
-  fun s ->
-    let symbol = Printf.sprintf "%s__%d" s !counter in
-    counter := !counter + 1;
-    symbol
+let lf_to_bool =
+  [
+    Mov (Reg Rax, Imm 0);
+    Setl (Reg Rax);
+    Shl (Reg Rax, Imm bool_shift);
+    Or (Reg Rax, Imm bool_tag);
+  ]
 
-let rec compile_exp (exp : s_exp) : directive list =
+let stack_offset (index : int) : operand = MemOffset (Reg Rsp, Imm index)
+
+let rec compile_exp (stack_index : int) (exp : s_exp) : directive list =
   match exp with
   | Num n -> [ Mov (Reg Rax, operand_of_num n) ]
   | Sym "false" -> [ Mov (Reg Rax, operand_of_bool false) ]
   | Sym "true" -> [ Mov (Reg Rax, operand_of_bool true) ]
   | Lst [ Sym "add1"; l ] ->
-      let p = compile_exp l in
+      let p = compile_exp stack_index l in
       p @ [ Add (Reg Rax, operand_of_num 1) ]
   | Lst [ Sym "sub1"; l ] ->
-      let p = compile_exp l in
+      let p = compile_exp stack_index l in
       p @ [ Sub (Reg Rax, operand_of_num 1) ]
   | Lst [ Sym "not"; l ] ->
-      compile_exp l @ [ Cmp (Reg Rax, operand_of_bool false) ] @ zf_to_bool
+      compile_exp stack_index l
+      @ [ Cmp (Reg Rax, operand_of_bool false) ]
+      @ zf_to_bool
   | Lst [ Sym "zero?"; l ] ->
-      compile_exp l @ [ Cmp (Reg Rax, operand_of_num 0) ] @ zf_to_bool
+      compile_exp stack_index l
+      @ [ Cmp (Reg Rax, operand_of_num 0) ]
+      @ zf_to_bool
   | Lst [ Sym "num?"; l ] ->
-      compile_exp l
+      compile_exp stack_index l
       @ [ And (Reg Rax, Imm num_mask); Cmp (Reg Rax, Imm num_tag) ]
       @ zf_to_bool
   | Lst [ Sym "if"; e_cond; e_then; e_else ] ->
       let else_label = gensym "else" in
       let cont_label = gensym "continue" in
-      compile_exp e_cond
+      compile_exp stack_index e_cond
       @ [ Cmp (Reg Rax, operand_of_bool false); Je else_label ]
-      @ compile_exp e_then @ [ Jmp cont_label ] @ [ Label else_label ]
-      @ compile_exp e_else @ [ Label cont_label ]
+      @ compile_exp stack_index e_then
+      @ [ Jmp cont_label ] @ [ Label else_label ]
+      @ compile_exp stack_index e_else
+      @ [ Label cont_label ]
   | Lst [ Sym "+"; e1; e2 ] ->
-      compile_exp e1
-      @ [ Mov (Reg R8, Reg Rax) ]
-      @ compile_exp e2
+      compile_exp stack_index e1
+      @ [ Mov (stack_offset stack_index, Reg Rax) ]
+      @ compile_exp (stack_index - 8) e2
+      @ [ Mov (Reg R8, stack_offset stack_index) ]
       @ [ Add (Reg Rax, Reg R8) ]
+  | Lst [ Sym "-"; e1; e2 ] ->
+      compile_exp stack_index e1
+      @ [ Mov (stack_offset stack_index, Reg Rax) ]
+      @ compile_exp (stack_index - 8) e2
+      @ [ Mov (Reg R8, Reg Rax) ] (* we have to flip the args for sub *)
+      @ [ Mov (Reg Rax, stack_offset stack_index) ]
+      @ [ Sub (Reg Rax, Reg R8) ]
+  | Lst [ Sym "="; e1; e2 ] ->
+      compile_exp stack_index e1
+      @ [ Mov (stack_offset stack_index, Reg Rax) ]
+      @ compile_exp (stack_index - 8) e2
+      @ [ Mov (Reg R8, stack_offset stack_index) ]
+      @ [ Cmp (Reg Rax, Reg R8) ]
+      @ zf_to_bool
+  | Lst [ Sym "<"; e1; e2 ] ->
+      compile_exp stack_index e1
+      @ [ Mov (stack_offset stack_index, Reg Rax) ]
+      @ compile_exp (stack_index - 8) e2
+      @ [ Mov (Reg R8, stack_offset stack_index) ]
+      @ [ Cmp (Reg Rax, Reg R8) ]
+      @ lf_to_bool
   | _ -> failwith "i dont know"
 
 let compile (exp : s_exp) : directive list =
-  let directives = compile_exp exp in
+  let directives = compile_exp (-8) exp in
   [ Global "lisp_entry"; Label "lisp_entry" ] @ directives @ [ Ret ]

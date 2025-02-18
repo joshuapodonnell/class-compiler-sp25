@@ -1,7 +1,10 @@
 open S_exp
 open Shared.Error
+open Util
 
 type value = Number of int | Boolean of bool
+
+let st = Symtab.empty
 
 let int_of_value (v : value) : int =
   match v with Number n -> n | Boolean _ -> failwith "boolean!"
