@@ -93,5 +93,5 @@ and compile_binop env stack_index e1 e2 =
   @ [ Mov (Reg Rax, stack_offset stack_index) ]
 
 let compile (exp : s_exp) : directive list =
-  let directives = compile_exp (-8) exp in
+  let directives = compile_exp Symtab.empty (-8) exp in
   [ Global "lisp_entry"; Label "lisp_entry" ] @ directives @ [ Ret ]
