@@ -8,3 +8,5 @@ add1, ERROR
 (< 4 5), true
 (< 4 1), false
 (let ((  y  (let ((x 1)) x)   )) x), ERROR
+(left (pair 1 2)), 1
+(= (pair 1 2) (pair 1 2))

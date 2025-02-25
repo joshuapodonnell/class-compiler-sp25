@@ -2,10 +2,10 @@ open S_exp
 open Shared.Error
 open Util
 
-type value = Number of int | Boolean of bool
+type value = Number of int | Boolean of bool | Pair of (value * value)
 
 let int_of_value (v : value) : int =
-  match v with Number n -> n | Boolean _ -> failwith "boolean!"
+  match v with Number n -> n | _ -> failwith "not a num!"
 
 let rec interp_exp (env : value symtab) (exp : s_exp) : value =
   match exp with
@@ -41,10 +41,35 @@ let rec interp_exp (env : value symtab) (exp : s_exp) : value =
       match (interp_exp env e1, interp_exp env e2) with
       | Number n1, Number n2 -> Boolean (n1 < n2)
       | _ -> raise (Stuck exp))
+  | Lst [ Sym "pair"; e1; e2 ] ->
+      let v1, v2 = (interp_exp env e1, interp_exp env e2) in
+      Pair (v1, v2)
+  | Lst [ Sym "left"; e ] -> (
+      match interp_exp env e with
+      | Pair (v, _) -> v
+      | _ -> failwith "not a pair")
+  | Lst [ Sym "right"; e ] -> (
+      match interp_exp env e with
+      | Pair (_, v) -> v
+      | _ -> failwith "not a pair")
   | _ -> raise (Stuck exp)
 
-let string_of_value (v : value) : string =
-  match v with Number n -> string_of_int n | Boolean b -> string_of_bool b
+(*
+
+(left (pair 1 2)) -> 1
+
+(let ((my_pair (...)))
+  (left my_pair)
+)
+
+*)
+
+let rec string_of_value (v : value) : string =
+  match v with
+  | Number n -> string_of_int n
+  | Boolean b -> string_of_bool b
+  | Pair (v1, v2) ->
+      Printf.sprintf "(pair %s %s)" (string_of_value v1) (string_of_value v2)
 
 let interp (program : s_exp) : string =
   interp_exp Symtab.empty program |> string_of_value

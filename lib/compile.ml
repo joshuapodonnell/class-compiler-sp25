@@ -9,6 +9,9 @@ let num_tag = 0b00
 let bool_tag = 0b0011111
 let bool_shift = 7
 let bool_mask = 0b1111111
+let pair_tag = 0b010
+let heap_shift = 3
+let heap_mask = 0b111
 
 let operand_of_bool (b : bool) : operand =
   Imm (((if b then 1 else 0) lsl bool_shift) lor bool_tag)
@@ -83,8 +86,24 @@ let rec compile_exp (env : int symtab) (stack_index : int) (exp : s_exp) :
       compile_binop env stack_index e1 e2
       @ [ Cmp (Reg Rax, Reg R8) ]
       @ lf_to_bool
+  | Lst [ Sym "pair"; e1; e2 ] ->
+      compile_binop env stack_index e1 e2
+      @ [
+          Mov (MemOffset (Reg Rdi, Imm 0), Reg Rax);
+          Mov (MemOffset (Reg Rdi, Imm 8), Reg R8);
+          Mov (Reg Rax, Reg Rdi);
+          Add (Reg Rdi, Imm 16);
+          Or (Reg Rax, Imm pair_tag);
+        ]
+  | Lst [ Sym "left"; e ] ->
+      compile_exp env stack_index e
+      @ [ Mov (Reg Rax, MemOffset (Reg Rax, Imm (-pair_tag))) ]
+  | Lst [ Sym "right"; e ] ->
+      compile_exp env stack_index e
+      @ [ Mov (Reg Rax, MemOffset (Reg Rax, Imm (-pair_tag + 8))) ]
   | _ -> failwith "i dont know"
 
+(* puts e1, e2 into rax, r8*)
 and compile_binop env stack_index e1 e2 =
   compile_exp env stack_index e1
   @ [ Mov (stack_offset stack_index, Reg Rax) ]
