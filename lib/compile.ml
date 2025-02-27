@@ -36,6 +36,24 @@ let lf_to_bool =
 
 let stack_offset (index : int) : operand = MemOffset (Reg Rsp, Imm index)
 
+(* our ensure function use register r9, so they shouldn't clobber anything *)
+
+let ensure_num (op : operand) : directive list =
+  [
+    Mov (Reg R9, op);
+    And (Reg R9, Imm num_mask);
+    Cmp (Reg R9, Imm num_tag);
+    Jne "error";
+  ]
+
+let ensure_pair (op : operand) : directive list =
+  [
+    Mov (Reg R9, op);
+    And (Reg R9, Imm heap_mask);
+    Cmp (Reg R9, Imm pair_tag);
+    Jne "error";
+  ]
+
 let rec compile_exp (env : int symtab) (stack_index : int) (exp : s_exp) :
     directive list =
   match exp with
@@ -49,10 +67,10 @@ let rec compile_exp (env : int symtab) (stack_index : int) (exp : s_exp) :
       @ compile_exp (Symtab.add var stack_index env) (stack_index - 8) e_body
   | Lst [ Sym "add1"; l ] ->
       let p = compile_exp env stack_index l in
-      p @ [ Add (Reg Rax, operand_of_num 1) ]
+      p @ ensure_num (Reg Rax) @ [ Add (Reg Rax, operand_of_num 1) ]
   | Lst [ Sym "sub1"; l ] ->
       let p = compile_exp env stack_index l in
-      p @ [ Sub (Reg Rax, operand_of_num 1) ]
+      p @ ensure_num (Reg Rax) @ [ Sub (Reg Rax, operand_of_num 1) ]
   | Lst [ Sym "not"; l ] ->
       compile_exp env stack_index l
       @ [ Cmp (Reg Rax, operand_of_bool false) ]
@@ -75,15 +93,21 @@ let rec compile_exp (env : int symtab) (stack_index : int) (exp : s_exp) :
       @ compile_exp env stack_index e_else
       @ [ Label cont_label ]
   | Lst [ Sym "+"; e1; e2 ] ->
-      compile_binop env stack_index e1 e2 @ [ Add (Reg Rax, Reg R8) ]
+      compile_binop env stack_index e1 e2
+      @ ensure_num (Reg Rax) @ ensure_num (Reg R8)
+      @ [ Add (Reg Rax, Reg R8) ]
   | Lst [ Sym "-"; e1; e2 ] ->
-      compile_binop env stack_index e1 e2 @ [ Sub (Reg Rax, Reg R8) ]
+      compile_binop env stack_index e1 e2
+      @ ensure_num (Reg Rax) @ ensure_num (Reg R8)
+      @ [ Sub (Reg Rax, Reg R8) ]
   | Lst [ Sym "="; e1; e2 ] ->
       compile_binop env stack_index e1 e2
+      @ ensure_num (Reg Rax) @ ensure_num (Reg R8)
       @ [ Cmp (Reg Rax, Reg R8) ]
       @ zf_to_bool
   | Lst [ Sym "<"; e1; e2 ] ->
       compile_binop env stack_index e1 e2
+      @ ensure_num (Reg Rax) @ ensure_num (Reg R8)
       @ [ Cmp (Reg Rax, Reg R8) ]
       @ lf_to_bool
   | Lst [ Sym "pair"; e1; e2 ] ->
@@ -97,10 +121,13 @@ let rec compile_exp (env : int symtab) (stack_index : int) (exp : s_exp) :
         ]
   | Lst [ Sym "left"; e ] ->
       compile_exp env stack_index e
+      @ ensure_pair (Reg Rax)
       @ [ Mov (Reg Rax, MemOffset (Reg Rax, Imm (-pair_tag))) ]
   | Lst [ Sym "right"; e ] ->
       compile_exp env stack_index e
+      @ ensure_pair (Reg Rax)
       @ [ Mov (Reg Rax, MemOffset (Reg Rax, Imm (-pair_tag + 8))) ]
+  | Lst [ Sym "read-num" ] -> failwith "not implemented yet"
   | _ -> failwith "i dont know"
 
 (* puts e1, e2 into rax, r8*)
@@ -113,4 +140,5 @@ and compile_binop env stack_index e1 e2 =
 
 let compile (exp : s_exp) : directive list =
   let directives = compile_exp Symtab.empty (-8) exp in
-  [ Global "lisp_entry"; Label "lisp_entry" ] @ directives @ [ Ret ]
+  [ Extern "error"; Extern "read_num"; Global "lisp_entry"; Label "lisp_entry" ]
+  @ directives @ [ Ret ]

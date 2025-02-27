@@ -7,6 +7,8 @@ type value = Number of int | Boolean of bool | Pair of (value * value)
 let int_of_value (v : value) : int =
   match v with Number n -> n | _ -> failwith "not a num!"
 
+let input_channel = ref stdin
+
 let rec interp_exp (env : value symtab) (exp : s_exp) : value =
   match exp with
   | Num n -> Number n
@@ -34,9 +36,13 @@ let rec interp_exp (env : value symtab) (exp : s_exp) : value =
       Number
         (int_of_value (interp_exp env e1) + int_of_value (interp_exp env e2))
   | Lst [ Sym "-"; e1; e2 ] ->
-      Number
-        (int_of_value (interp_exp env e1) - int_of_value (interp_exp env e2))
-  | Lst [ Sym "="; e1; e2 ] -> Boolean (interp_exp env e1 = interp_exp env e2)
+      let v1 = interp_exp env e1 in
+      let v2 = interp_exp env e2 in
+      Number (int_of_value v1 - int_of_value v2)
+  | Lst [ Sym "="; e1; e2 ] -> (
+      match (interp_exp env e1, interp_exp env e2) with
+      | Number n1, Number n2 -> Boolean (n1 = n2)
+      | _ -> raise (Stuck exp))
   | Lst [ Sym "<"; e1; e2 ] -> (
       match (interp_exp env e1, interp_exp env e2) with
       | Number n1, Number n2 -> Boolean (n1 < n2)
@@ -52,6 +58,7 @@ let rec interp_exp (env : value symtab) (exp : s_exp) : value =
       match interp_exp env e with
       | Pair (_, v) -> v
       | _ -> failwith "not a pair")
+  | Lst [ Sym "read-num" ] -> Number (input_line !input_channel |> int_of_string)
   | _ -> raise (Stuck exp)
 
 (*

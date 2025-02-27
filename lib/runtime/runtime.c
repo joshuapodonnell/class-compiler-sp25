@@ -39,6 +39,17 @@ void print_value(uint64_t value) {
   }
 }
 
+void error() {
+  printf("ERROR");
+  exit(1);
+}
+
+uint64_t read_num() {
+  int r;
+  scanf("%d", &r);
+  return (uint64_t)(r) << num_shift;
+}
+
 int main(int argc, char **argv) {
   void *heap = (void *)malloc(4096);
   print_value(lisp_entry(heap));
