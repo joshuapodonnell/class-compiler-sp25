@@ -10,6 +10,12 @@ let int_of_value (v : value) : int =
 let input_channel = ref stdin
 
 let rec interp_exp (env : value symtab) (exp : s_exp) : value =
+  (* interp2 is a helper to force the evaluation of 2 exprs in order *)
+  let interp2 env e1 e2 =
+    let v1 = interp_exp env e1 in
+    let v2 = interp_exp env e2 in
+    (v1, v2)
+  in
   match exp with
   | Num n -> Number n
   | Sym "false" -> Boolean false
@@ -33,23 +39,20 @@ let rec interp_exp (env : value symtab) (exp : s_exp) : value =
       if v_cond = Boolean false then interp_exp env e_else
       else interp_exp env e_then
   | Lst [ Sym "+"; e1; e2 ] ->
-      Number
-        (int_of_value (interp_exp env e1) + int_of_value (interp_exp env e2))
+      let v1, v2 = interp2 env e1 e2 in
+      Number (int_of_value v1 + int_of_value v2)
   | Lst [ Sym "-"; e1; e2 ] ->
-      let v1 = interp_exp env e1 in
-      let v2 = interp_exp env e2 in
+      let v1, v2 = interp2 env e1 e2 in
       Number (int_of_value v1 - int_of_value v2)
   | Lst [ Sym "="; e1; e2 ] -> (
-      match (interp_exp env e1, interp_exp env e2) with
+      match interp2 env e1 e2 with
       | Number n1, Number n2 -> Boolean (n1 = n2)
       | _ -> raise (Stuck exp))
   | Lst [ Sym "<"; e1; e2 ] -> (
-      match (interp_exp env e1, interp_exp env e2) with
+      match interp2 env e1 e2 with
       | Number n1, Number n2 -> Boolean (n1 < n2)
       | _ -> raise (Stuck exp))
-  | Lst [ Sym "pair"; e1; e2 ] ->
-      let v1, v2 = (interp_exp env e1, interp_exp env e2) in
-      Pair (v1, v2)
+  | Lst [ Sym "pair"; e1; e2 ] -> Pair (interp2 env e1 e2)
   | Lst [ Sym "left"; e ] -> (
       match interp_exp env e with
       | Pair (v, _) -> v
@@ -60,16 +63,6 @@ let rec interp_exp (env : value symtab) (exp : s_exp) : value =
       | _ -> failwith "not a pair")
   | Lst [ Sym "read-num" ] -> Number (input_line !input_channel |> int_of_string)
   | _ -> raise (Stuck exp)
-
-(*
-
-(left (pair 1 2)) -> 1
-
-(let ((my_pair (...)))
-  (left my_pair)
-)
-
-*)
 
 let rec string_of_value (v : value) : string =
   match v with
