@@ -36,23 +36,17 @@ let lf_to_bool =
 
 let stack_offset (index : int) : operand = MemOffset (Reg Rsp, Imm index)
 
-(* our ensure function use register r9, so they shouldn't clobber anything *)
-
-let ensure_num (op : operand) : directive list =
+(* our ensure functions use register r9, so they shouldn't clobber anything *)
+let ensure_type (mask : int) (tag : int) (op : operand) : directive list =
   [
-    Mov (Reg R9, op);
-    And (Reg R9, Imm num_mask);
-    Cmp (Reg R9, Imm num_tag);
-    Jne "error";
+    Mov (Reg R9, op); And (Reg R9, Imm mask); Cmp (Reg R9, Imm tag); Jne "error";
   ]
 
-let ensure_pair (op : operand) : directive list =
-  [
-    Mov (Reg R9, op);
-    And (Reg R9, Imm heap_mask);
-    Cmp (Reg R9, Imm pair_tag);
-    Jne "error";
-  ]
+let ensure_num : operand -> directive list = ensure_type num_mask num_tag
+let ensure_pair : operand -> directive list = ensure_type heap_mask pair_tag
+
+let align_stack_index (stack_index : int) : int =
+  if stack_index mod 16 = -8 then stack_index else stack_index - 8
 
 let rec compile_exp (env : int symtab) (stack_index : int) (exp : s_exp) :
     directive list =
@@ -127,7 +121,34 @@ let rec compile_exp (env : int symtab) (stack_index : int) (exp : s_exp) :
       compile_exp env stack_index e
       @ ensure_pair (Reg Rax)
       @ [ Mov (Reg Rax, MemOffset (Reg Rax, Imm (-pair_tag + 8))) ]
-  | Lst [ Sym "read-num" ] -> failwith "not implemented yet"
+  | Lst [ Sym "read-num" ] ->
+      [
+        Mov (stack_offset stack_index, Reg Rdi);
+        Add (Reg Rsp, Imm (align_stack_index stack_index));
+        Call "read_num";
+        Sub (Reg Rsp, Imm (align_stack_index stack_index));
+        Mov (Reg Rdi, stack_offset stack_index);
+      ]
+  | Lst [ Sym "newline" ] ->
+      [
+        Mov (stack_offset stack_index, Reg Rdi);
+        Add (Reg Rsp, Imm (align_stack_index stack_index));
+        Call "print_newline";
+        Sub (Reg Rsp, Imm (align_stack_index stack_index));
+        Mov (Reg Rdi, stack_offset stack_index);
+      ]
+  | Lst [ Sym "print"; e ] ->
+      compile_exp env stack_index e
+      @ [
+          Mov (stack_offset stack_index, Reg Rdi);
+          Add (Reg Rsp, Imm (align_stack_index stack_index));
+          Mov (Reg Rdi, Reg Rax);
+          Call "print_value";
+          Sub (Reg Rsp, Imm (align_stack_index stack_index));
+          Mov (Reg Rdi, stack_offset stack_index);
+        ]
+  | Lst (Sym "do" :: exprs) ->
+      List.concat_map (compile_exp env stack_index) exprs
   | _ -> failwith "i dont know"
 
 (* puts e1, e2 into rax, r8*)
@@ -140,5 +161,12 @@ and compile_binop env stack_index e1 e2 =
 
 let compile (exp : s_exp) : directive list =
   let directives = compile_exp Symtab.empty (-8) exp in
-  [ Extern "error"; Extern "read_num"; Global "lisp_entry"; Label "lisp_entry" ]
+  [
+    Extern "error";
+    Extern "read_num";
+    Extern "print_newline";
+    Extern "print_value";
+    Global "lisp_entry";
+    Label "lisp_entry";
+  ]
   @ directives @ [ Ret ]

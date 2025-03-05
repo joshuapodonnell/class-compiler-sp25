@@ -2,8 +2,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-extern uint64_t lisp_entry();
-
 #define num_mask 0b11
 #define num_tag 0b00
 #define num_shift 2
@@ -49,6 +47,10 @@ uint64_t read_num() {
   scanf("%d", &r);
   return (uint64_t)(r) << num_shift;
 }
+
+void print_newline() { printf("\n"); }
+
+extern uint64_t lisp_entry(void *heap);
 
 int main(int argc, char **argv) {
   void *heap = (void *)malloc(4096);

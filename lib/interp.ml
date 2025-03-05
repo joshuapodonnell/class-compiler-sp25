@@ -7,7 +7,15 @@ type value = Number of int | Boolean of bool | Pair of (value * value)
 let int_of_value (v : value) : int =
   match v with Number n -> n | _ -> failwith "not a num!"
 
+let rec string_of_value (v : value) : string =
+  match v with
+  | Number n -> string_of_int n
+  | Boolean b -> string_of_bool b
+  | Pair (v1, v2) ->
+      Printf.sprintf "(pair %s %s)" (string_of_value v1) (string_of_value v2)
+
 let input_channel = ref stdin
+let output_channel = ref stdout
 
 let rec interp_exp (env : value symtab) (exp : s_exp) : value =
   (* interp2 is a helper to force the evaluation of 2 exprs in order *)
@@ -62,14 +70,37 @@ let rec interp_exp (env : value symtab) (exp : s_exp) : value =
       | Pair (_, v) -> v
       | _ -> failwith "not a pair")
   | Lst [ Sym "read-num" ] -> Number (input_line !input_channel |> int_of_string)
+  | Lst [ Sym "print"; e ] ->
+      let v = interp_exp env e in
+      output_string !output_channel (string_of_value v);
+      Boolean true
+  | Lst [ Sym "newline" ] ->
+      output_string !output_channel "\n";
+      Boolean true
+  | Lst (Sym "do" :: exprs) ->
+      List.map (interp_exp env) exprs |> ignore;
+      Boolean true
   | _ -> raise (Stuck exp)
-
-let rec string_of_value (v : value) : string =
-  match v with
-  | Number n -> string_of_int n
-  | Boolean b -> string_of_bool b
-  | Pair (v1, v2) ->
-      Printf.sprintf "(pair %s %s)" (string_of_value v1) (string_of_value v2)
 
 let interp (program : s_exp) : string =
   interp_exp Symtab.empty program |> string_of_value
+
+let interp_io (input : string) (program : s_exp) =
+  let input_pipe_ex, input_pipe_en = Unix.pipe () in
+  let output_pipe_ex, output_pipe_en = Unix.pipe () in
+  input_channel := Unix.in_channel_of_descr input_pipe_ex;
+  set_binary_mode_in !input_channel false;
+  output_channel := Unix.out_channel_of_descr output_pipe_en;
+  set_binary_mode_out !output_channel false;
+  let write_input_channel = Unix.out_channel_of_descr input_pipe_en in
+  set_binary_mode_out write_input_channel false;
+  let read_output_channel = Unix.in_channel_of_descr output_pipe_ex in
+  set_binary_mode_in read_output_channel false;
+  output_string write_input_channel input;
+  close_out write_input_channel;
+  let final = interp program in
+  close_out !output_channel;
+  let r = In_channel.input_all read_output_channel in
+  input_channel := stdin;
+  output_channel := stdout;
+  r ^ final
