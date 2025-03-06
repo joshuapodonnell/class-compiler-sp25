@@ -1,1 +1,1 @@
-(add1 (sub1 5))
+(print (add1 (sub1 5)))

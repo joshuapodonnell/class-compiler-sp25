@@ -82,8 +82,7 @@ let rec interp_exp (env : value symtab) (exp : s_exp) : value =
       Boolean true
   | _ -> raise (Stuck exp)
 
-let interp (program : s_exp) : string =
-  interp_exp Symtab.empty program |> string_of_value
+let interp (program : s_exp) : unit = interp_exp Symtab.empty program |> ignore
 
 let interp_io (input : string) (program : s_exp) =
   let input_pipe_ex, input_pipe_en = Unix.pipe () in
@@ -98,9 +97,9 @@ let interp_io (input : string) (program : s_exp) =
   set_binary_mode_in read_output_channel false;
   output_string write_input_channel input;
   close_out write_input_channel;
-  let final = interp program in
+  interp program;
   close_out !output_channel;
   let r = In_channel.input_all read_output_channel in
   input_channel := stdin;
   output_channel := stdout;
-  r ^ final
+  r

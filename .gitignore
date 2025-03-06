@@ -7,3 +7,4 @@ runtime/*.o
 .merlin
 /output/
 .DS_Store
+.vscode/settings.json

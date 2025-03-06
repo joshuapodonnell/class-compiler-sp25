@@ -8,7 +8,7 @@ module I : Infra.T = struct
     | Infra.Lisp -> S_exp.parse s
     | Infra.Mlb -> failwith "Cannot parse .mlb files for this homework"
 
-  let interp prog = Printf.printf "%s%!" (Lib.Interp.interp prog)
+  let interp = Lib.Interp.interp
   let interp_io ~input prog = Lib.Interp.interp_io input prog
   let compile = Lib.Compile.compile
   let runtime_object_file = Lib.Runtime.runtime

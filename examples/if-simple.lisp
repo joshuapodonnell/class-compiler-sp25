@@ -1,1 +1,1 @@
-(if false 1 (if true 4 3))
+(print (if false 1 (if true 4 3)))

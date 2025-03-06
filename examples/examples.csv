@@ -1,16 +1,16 @@
-5, 5
-(add1 5)
+(print 5), 5
+(print (add1 5))
 add1, ERROR
-(+ 1 (+ 2 3))
-(- 6 (+ 2 3))
-(- 6 (- 4 3))
-(- (- 0 3) (+ 10 50))
-(< 4 5), true
-(< 4 1), false
-(let ((  y  (let ((x 1)) x)   )) x), ERROR
-(left (pair 1 2)), 1
-(left 5), ERROR
-(< 1 false), ERROR
-(- 1 false), ERROR
-(= (pair 1 2) (pair 1 2)), ERROR
-(= 5 5), true
+(print (+ 1 (+ 2 3)))
+(print (- 6 (+ 2 3)))
+(print (- 6 (- 4 3)))
+(print (- (- 0 3) (+ 10 50)))
+(print (< 4 5)), true
+(print (< 4 1)), false
+(print (let ((  y  (let ((x 1)) x)   )) x)), ERROR
+(print (left (pair 1 2))), 1
+(print (left 5)), ERROR
+(print (< 1 false)), ERROR
+(print (- 1 false)), ERROR
+(print (= (pair 1 2) (pair 1 2))), ERROR
+(print (= 5 5)), true

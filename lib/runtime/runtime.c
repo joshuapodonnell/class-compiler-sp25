@@ -54,6 +54,6 @@ extern uint64_t lisp_entry(void *heap);
 
 int main(int argc, char **argv) {
   void *heap = (void *)malloc(4096);
-  print_value(lisp_entry(heap));
+  lisp_entry(heap);
   return 0;
 }
