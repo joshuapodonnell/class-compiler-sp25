@@ -1,11 +1,11 @@
 open Shared
 
 module I : Infra.T = struct
-  type program = S_exp.s_exp
+  type program = S_exp.s_exp list
 
-  let parse syntax s =
+  let parse syntax s : program =
     match syntax with
-    | Infra.Lisp -> S_exp.parse s
+    | Infra.Lisp -> S_exp.parse_many s
     | Infra.Mlb -> failwith "Cannot parse .mlb files for this homework"
 
   let interp = Lib.Interp.interp

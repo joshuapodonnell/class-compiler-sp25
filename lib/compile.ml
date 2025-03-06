@@ -1,6 +1,7 @@
 open Shared
 open S_exp
 open Directive
+open Symtab
 open Util
 
 let num_shift = 2
@@ -159,8 +160,8 @@ and compile_binop env stack_index e1 e2 =
   @ [ Mov (Reg R8, Reg Rax) ] (* we have to flip the args for sub *)
   @ [ Mov (Reg Rax, stack_offset stack_index) ]
 
-let compile (exp : s_exp) : directive list =
-  let directives = compile_exp Symtab.empty (-8) exp in
+let compile (exp : s_exp list) : directive list =
+  let directives = compile_exp Symtab.empty (-8) (List.hd exp) in
   [
     Extern "error";
     Extern "read_num";

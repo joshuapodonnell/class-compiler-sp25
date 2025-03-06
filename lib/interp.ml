@@ -1,5 +1,6 @@
 open S_exp
 open Shared.Error
+open Symtab
 open Util
 
 type value = Number of int | Boolean of bool | Pair of (value * value)
@@ -82,9 +83,10 @@ let rec interp_exp (env : value symtab) (exp : s_exp) : value =
       Boolean true
   | _ -> raise (Stuck exp)
 
-let interp (program : s_exp) : unit = interp_exp Symtab.empty program |> ignore
+let interp (program : s_exp list) : unit =
+  interp_exp Symtab.empty (List.hd program) |> ignore
 
-let interp_io (input : string) (program : s_exp) =
+let interp_io (input : string) (program : s_exp list) =
   let input_pipe_ex, input_pipe_en = Unix.pipe () in
   let output_pipe_ex, output_pipe_en = Unix.pipe () in
   input_channel := Unix.in_channel_of_descr input_pipe_ex;
