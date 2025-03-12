@@ -36,11 +36,7 @@ let rec interp_exp (defns : defn list) (env : value symtab) (exp : s_exp) :
       if List.length args = List.length defn.args then
         let vals = List.map (interp_exp defns env) args in
         let pairs = List.combine defn.args vals in
-        let fenv =
-          List.fold_left
-            (fun env (k, v) -> Symtab.add k v env)
-            Symtab.empty pairs
-        in
+        let fenv = Symtab.of_list pairs in
         interp_exp defns fenv defn.body
       else failwith "wrong number of args"
   | Lst [ Sym "let"; Lst [ Lst [ Sym var; e ] ]; e_body ] ->
