@@ -14,6 +14,19 @@ let pair_tag = 0b010
 let heap_shift = 3
 let heap_mask = 0b111
 
+(* sanitized a label name so the assembler doesn't yell at us *)
+let function_label s =
+  let nasm_char c =
+    match c with
+    | 'a' .. 'z'
+    | 'A' .. 'Z'
+    | '0' .. '9'
+    | '_' | '$' | '#' | '@' | '~' | '.' | '?' ->
+        c
+    | _ -> '_'
+  in
+  Printf.sprintf "function_%s_%d" (String.map nasm_char s) (Hashtbl.hash s)
+
 let operand_of_bool (b : bool) : operand =
   Imm (((if b then 1 else 0) lsl bool_shift) lor bool_tag)
 
@@ -70,7 +83,7 @@ let rec compile_exp defns (env : int symtab) (stack_index : int) (exp : s_exp) :
         compiled_args
         @ [
             Add (Reg Rsp, Imm stack_base);
-            Call defn.name;
+            Call (function_label defn.name);
             Sub (Reg Rsp, Imm stack_base);
           ]
       else failwith "wrong number of args"
@@ -185,7 +198,9 @@ let compile_defn defns defn =
     defn.args |> List.mapi (fun i arg -> (arg, -8 * (i + 1))) |> Symtab.of_list
   in
   let stack_index = -8 * (List.length defn.args + 1) in
-  [ Label defn.name ] @ compile_exp defns env stack_index defn.body @ [ Ret ]
+  [ Label (function_label defn.name) ]
+  @ compile_exp defns env stack_index defn.body
+  @ [ Ret ]
 
 let compile (program : s_exp list) : directive list =
   let defns, body = defns_and_body program in
