@@ -1,6 +1,9 @@
-(define (fib n) 
-  (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))
-(print (fib (read-num)))
+(define (sum-tail n acc)
+ (if (zero? n)
+  acc
+  (sum-tail (sub1 n) (+ n acc))))
+
+(print (sum-tail (read-num) 0))
 
 
 
