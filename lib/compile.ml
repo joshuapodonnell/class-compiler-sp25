@@ -1,20 +1,22 @@
-open Shared
-open S_exp
-open Directive
-open Symtab
 open Util
+open Shared
+open Directive
+open Ast
 
+(** constants used for tagging values at runtime *)
 let num_shift = 2
+
 let num_mask = 0b11
 let num_tag = 0b00
-let bool_tag = 0b0011111
 let bool_shift = 7
 let bool_mask = 0b1111111
-let pair_tag = 0b010
-let heap_shift = 3
+let bool_tag = 0b0011111
 let heap_mask = 0b111
+let pair_tag = 0b010
+let nil_tag = 0b11111111
 
-(* sanitized a label name so the assembler doesn't yell at us *)
+type symtab = int Symtab.symtab
+
 let function_label s =
   let nasm_char c =
     match c with
@@ -27,10 +29,16 @@ let function_label s =
   in
   Printf.sprintf "function_%s_%d" (String.map nasm_char s) (Hashtbl.hash s)
 
+(** [operand_of_num x] returns the runtime representation of the number [x] as
+    an operand for instructions *)
+let operand_of_num (x : int) : operand = Imm ((x lsl num_shift) lor num_tag)
+
+(** [operand_of_bool b] returns the runtime representation of the boolean [b] as
+    an operand for instructions *)
 let operand_of_bool (b : bool) : operand =
   Imm (((if b then 1 else 0) lsl bool_shift) lor bool_tag)
 
-let operand_of_num (n : int) : operand = Imm ((n lsl num_shift) lor num_tag)
+let operand_of_nil = Imm nil_tag
 
 let zf_to_bool =
   [
@@ -40,7 +48,7 @@ let zf_to_bool =
     Or (Reg Rax, Imm bool_tag);
   ]
 
-let lf_to_bool =
+let setl_bool =
   [
     Mov (Reg Rax, Imm 0);
     Setl (Reg Rax);
@@ -48,196 +56,202 @@ let lf_to_bool =
     Or (Reg Rax, Imm bool_tag);
   ]
 
-let stack_offset (index : int) : operand = MemOffset (Reg Rsp, Imm index)
+let stack_address (index : int) : operand = MemOffset (Imm index, Reg Rsp)
 
-(* our ensure functions use register r9, so they shouldn't clobber anything *)
-let ensure_type (mask : int) (tag : int) (op : operand) : directive list =
-  [
-    Mov (Reg R9, op); And (Reg R9, Imm mask); Cmp (Reg R9, Imm tag); Jne "error";
-  ]
+let ensure condition err_msg =
+  let msg_label = gensym "emsg" in
+  let continue_label = gensym "continue" in
+  condition
+  @ [
+      Je continue_label;
+      LeaLabel (Reg Rdi, msg_label);
+      Jmp "lisp_error";
+      Label msg_label;
+      DqString err_msg;
+      Label continue_label;
+    ]
 
-let ensure_num : operand -> directive list = ensure_type num_mask num_tag
-let ensure_pair : operand -> directive list = ensure_type heap_mask pair_tag
+let ensure_type mask tag op e =
+  ensure
+    [ Mov (Reg R8, op); And (Reg R8, Imm mask); Cmp (Reg R8, Imm tag) ]
+    (string_of_expr e)
+
+let ensure_num = ensure_type num_mask num_tag
+let ensure_pair = ensure_type heap_mask pair_tag
 
 let align_stack_index (stack_index : int) : int =
   if stack_index mod 16 = -8 then stack_index else stack_index - 8
 
-let rec compile_exp defns (env : int symtab) (stack_index : int) (exp : s_exp)
-    (is_tail : bool) : directive list =
-  match exp with
-  | Num n -> [ Mov (Reg Rax, operand_of_num n) ]
-  | Sym "false" -> [ Mov (Reg Rax, operand_of_bool false) ]
-  | Sym "true" -> [ Mov (Reg Rax, operand_of_bool true) ]
-  | Sym var -> [ Mov (Reg Rax, stack_offset (Symtab.find var env)) ]
-  | Lst (Sym f :: args) when is_defn defns f && is_tail ->
+(** [compile_0ary_primitive e prim] produces X86-64 instructions for the
+    zero-arity primitive operation [prim]; if [prim] isn't a valid zero-arity
+    operation, it raises an error using the expression [e] *)
+let compile_0ary_primitive stack_index _e = function
+  | ReadNum ->
+      [
+        Mov (stack_address stack_index, Reg Rdi);
+        Add (Reg Rsp, Imm (align_stack_index stack_index));
+        Call "read_num";
+        Sub (Reg Rsp, Imm (align_stack_index stack_index));
+        Mov (Reg Rdi, stack_address stack_index);
+      ]
+  | Newline ->
+      [
+        Mov (stack_address stack_index, Reg Rdi);
+        Add (Reg Rsp, Imm (align_stack_index stack_index));
+        Call "print_newline";
+        Sub (Reg Rsp, Imm (align_stack_index stack_index));
+        Mov (Reg Rdi, stack_address stack_index);
+        Mov (Reg Rax, operand_of_bool true);
+      ]
+
+(** [compile_unary_primitive e prim] produces X86-64 instructions for the unary
+    primitive operation [prim]; if [prim] isn't a valid unary operation, it
+    raises an error using the expression [e] *)
+let compile_unary_primitive stack_index e = function
+  | Add1 -> ensure_num (Reg Rax) e @ [ Add (Reg Rax, operand_of_num 1) ]
+  | Sub1 -> ensure_num (Reg Rax) e @ [ Sub (Reg Rax, operand_of_num 1) ]
+  | IsZero -> [ Cmp (Reg Rax, operand_of_num 0) ] @ zf_to_bool
+  | IsNum ->
+      [ And (Reg Rax, Imm num_mask); Cmp (Reg Rax, Imm num_tag) ] @ zf_to_bool
+  | Not -> [ Cmp (Reg Rax, operand_of_bool false) ] @ zf_to_bool
+  | IsPair ->
+      [ And (Reg Rax, Imm heap_mask); Cmp (Reg Rax, Imm pair_tag) ] @ zf_to_bool
+  | Left ->
+      ensure_pair (Reg Rax) e
+      @ [ Mov (Reg Rax, MemOffset (Reg Rax, Imm (-pair_tag))) ]
+  | Right ->
+      ensure_pair (Reg Rax) e
+      @ [ Mov (Reg Rax, MemOffset (Reg Rax, Imm (-pair_tag + 8))) ]
+  | IsEmpty -> [ Cmp (Reg Rax, operand_of_nil) ] @ zf_to_bool
+  | Print ->
+      [
+        Mov (stack_address stack_index, Reg Rdi);
+        Mov (Reg Rdi, Reg Rax);
+        Add (Reg Rsp, Imm (align_stack_index stack_index));
+        Call "print_value";
+        Sub (Reg Rsp, Imm (align_stack_index stack_index));
+        Mov (Reg Rdi, stack_address stack_index);
+        Mov (Reg Rax, operand_of_bool true);
+      ]
+
+(** [compile_binary_primitive stack_index e prim] produces X86-64 instructions
+    for the binary primitive operation [prim]; if [prim] isn't a valid binary
+    operation, it raises an error using the expression [e] *)
+let compile_binary_primitive stack_index e = function
+  | Plus ->
+      ensure_num (Reg Rax) e
+      @ ensure_num (stack_address stack_index) e
+      @ [ Add (Reg Rax, stack_address stack_index) ]
+  | Minus ->
+      ensure_num (Reg Rax) e
+      @ ensure_num (stack_address stack_index) e
+      @ [
+          Mov (Reg R8, Reg Rax);
+          Mov (Reg Rax, stack_address stack_index);
+          Sub (Reg Rax, Reg R8);
+        ]
+  | Eq ->
+      ensure_num (Reg Rax) e
+      @ ensure_num (stack_address stack_index) e
+      @ [ Cmp (stack_address stack_index, Reg Rax) ]
+      @ zf_to_bool
+  | Lt ->
+      ensure_num (Reg Rax) e
+      @ ensure_num (stack_address stack_index) e
+      @ [ Cmp (stack_address stack_index, Reg Rax) ]
+      @ setl_bool
+  | Pair ->
+      [
+        Mov (Reg R8, stack_address stack_index);
+        Mov (MemOffset (Reg Rdi, Imm 0), Reg R8);
+        Mov (MemOffset (Reg Rdi, Imm 8), Reg Rax);
+        Mov (Reg Rax, Reg Rdi);
+        Or (Reg Rax, Imm pair_tag);
+        Add (Reg Rdi, Imm 16);
+      ]
+
+let align n alignment =
+  if n mod alignment = 0 then n else n + (alignment - (n mod alignment))
+
+(** [compile_expr e] produces X86-64 instructions for the expression [e] *)
+let rec compile_expr (defns : defn list) (tab : symtab) (stack_index : int) :
+    expr -> directive list = function
+  | Num x -> [ Mov (Reg Rax, operand_of_num x) ]
+  | True -> [ Mov (Reg Rax, operand_of_bool true) ]
+  | False -> [ Mov (Reg Rax, operand_of_bool false) ]
+  | Var var when Symtab.mem var tab ->
+      [ Mov (Reg Rax, stack_address (Symtab.find var tab)) ]
+  | Var _ as e -> raise (Error.Stuck (s_exp_of_expr e))
+  | Nil -> [ Mov (Reg Rax, operand_of_nil) ]
+  | If (test_expr, then_expr, else_expr) ->
+      let then_label = gensym "then" in
+      let else_label = gensym "else" in
+      let continue_label = gensym "continue" in
+      compile_expr defns tab stack_index test_expr
+      @ [ Cmp (Reg Rax, operand_of_bool false); Je else_label ]
+      @ [ Label then_label ]
+      @ compile_expr defns tab stack_index then_expr
+      @ [ Jmp continue_label ] @ [ Label else_label ]
+      @ compile_expr defns tab stack_index else_expr
+      @ [ Label continue_label ]
+  | Let (var, exp, body) ->
+      compile_expr defns tab stack_index exp
+      @ [ Mov (stack_address stack_index, Reg Rax) ]
+      @ compile_expr defns
+          (Symtab.add var stack_index tab)
+          (stack_index - 8) body
+  | Do exps -> List.concat_map (compile_expr defns tab stack_index) exps
+  | Call (f, args) as e when is_defn defns f ->
+      let stack_base = align_stack_index (stack_index + 8) in
       let defn = get_defn defns f in
       if List.length args = List.length defn.args then
         let compiled_args =
           args
           |> List.mapi (fun i arg ->
-                 compile_exp defns env (stack_index - (i * 8)) arg false
-                 @ [ Mov (stack_offset (stack_index - (i * 8)), Reg Rax) ])
-          |> List.concat
-        in
-        let moved_args =
-          args
-          |> List.mapi (fun i _ ->
-                 [
-                   Mov (Reg R8, stack_offset (stack_index - (i * 8)));
-                   Mov (stack_offset ((i + 1) * -8), Reg R8);
-                 ])
-          |> List.concat
-        in
-        compiled_args @ moved_args @ [ Jmp (function_label defn.name) ]
-      else failwith "wrong number of args"
-  | Lst (Sym f :: args) when is_defn defns f ->
-      let defn = get_defn defns f in
-      if List.length args = List.length defn.args then
-        let stack_base = align_stack_index (stack_index + 8) in
-        let compiled_args =
-          args
-          |> List.mapi (fun i arg ->
-                 compile_exp defns env (stack_base - ((i + 2) * 8)) arg false
-                 @ [ Mov (stack_offset (stack_base - ((i + 2) * 8)), Reg Rax) ])
+                 compile_expr defns tab (stack_base - ((i + 2) * 8)) arg
+                 @ [ Mov (stack_address (stack_base - ((i + 2) * 8)), Reg Rax) ])
           |> List.concat
         in
         compiled_args
         @ [
             Add (Reg Rsp, Imm stack_base);
-            Call (function_label defn.name);
+            Call (function_label f);
             Sub (Reg Rsp, Imm stack_base);
           ]
-      else failwith "wrong number of args"
-  | Lst [ Sym "let"; Lst [ Lst [ Sym var; e ] ]; e_body ] ->
-      compile_exp defns env stack_index e false
-      @ [ Mov (stack_offset stack_index, Reg Rax) ]
-      @ compile_exp defns
-          (Symtab.add var stack_index env)
-          (stack_index - 8) e_body is_tail
-  | Lst [ Sym "add1"; l ] ->
-      let p = compile_exp defns env stack_index l false in
-      p @ ensure_num (Reg Rax) @ [ Add (Reg Rax, operand_of_num 1) ]
-  | Lst [ Sym "sub1"; l ] ->
-      let p = compile_exp defns env stack_index l false in
-      p @ ensure_num (Reg Rax) @ [ Sub (Reg Rax, operand_of_num 1) ]
-  | Lst [ Sym "not"; l ] ->
-      compile_exp defns env stack_index l false
-      @ [ Cmp (Reg Rax, operand_of_bool false) ]
-      @ zf_to_bool
-  | Lst [ Sym "zero?"; l ] ->
-      compile_exp defns env stack_index l false
-      @ [ Cmp (Reg Rax, operand_of_num 0) ]
-      @ zf_to_bool
-  | Lst [ Sym "num?"; l ] ->
-      compile_exp defns env stack_index l false
-      @ [ And (Reg Rax, Imm num_mask); Cmp (Reg Rax, Imm num_tag) ]
-      @ zf_to_bool
-  | Lst [ Sym "if"; e_cond; e_then; e_else ] ->
-      let else_label = gensym "else" in
-      let cont_label = gensym "continue" in
-      compile_exp defns env stack_index e_cond false
-      @ [ Cmp (Reg Rax, operand_of_bool false); Je else_label ]
-      @ compile_exp defns env stack_index e_then is_tail
-      @ [ Jmp cont_label ] @ [ Label else_label ]
-      @ compile_exp defns env stack_index e_else is_tail
-      @ [ Label cont_label ]
-  | Lst [ Sym "+"; e1; e2 ] ->
-      compile_binop defns env stack_index e1 e2
-      @ ensure_num (Reg Rax) @ ensure_num (Reg R8)
-      @ [ Add (Reg Rax, Reg R8) ]
-  | Lst [ Sym "-"; e1; e2 ] ->
-      compile_binop defns env stack_index e1 e2
-      @ ensure_num (Reg Rax) @ ensure_num (Reg R8)
-      @ [ Sub (Reg Rax, Reg R8) ]
-  | Lst [ Sym "="; e1; e2 ] ->
-      compile_binop defns env stack_index e1 e2
-      @ ensure_num (Reg Rax) @ ensure_num (Reg R8)
-      @ [ Cmp (Reg Rax, Reg R8) ]
-      @ zf_to_bool
-  | Lst [ Sym "<"; e1; e2 ] ->
-      compile_binop defns env stack_index e1 e2
-      @ ensure_num (Reg Rax) @ ensure_num (Reg R8)
-      @ [ Cmp (Reg Rax, Reg R8) ]
-      @ lf_to_bool
-  | Lst [ Sym "pair"; e1; e2 ] ->
-      compile_binop defns env stack_index e1 e2
-      @ [
-          Mov (MemOffset (Reg Rdi, Imm 0), Reg Rax);
-          Mov (MemOffset (Reg Rdi, Imm 8), Reg R8);
-          Mov (Reg Rax, Reg Rdi);
-          Add (Reg Rdi, Imm 16);
-          Or (Reg Rax, Imm pair_tag);
-        ]
-  | Lst [ Sym "left"; e ] ->
-      compile_exp defns env stack_index e false
-      @ ensure_pair (Reg Rax)
-      @ [ Mov (Reg Rax, MemOffset (Reg Rax, Imm (-pair_tag))) ]
-  | Lst [ Sym "right"; e ] ->
-      compile_exp defns env stack_index e false
-      @ ensure_pair (Reg Rax)
-      @ [ Mov (Reg Rax, MemOffset (Reg Rax, Imm (-pair_tag + 8))) ]
-  | Lst [ Sym "read-num" ] ->
-      [
-        Mov (stack_offset stack_index, Reg Rdi);
-        Add (Reg Rsp, Imm (align_stack_index stack_index));
-        Call "read_num";
-        Sub (Reg Rsp, Imm (align_stack_index stack_index));
-        Mov (Reg Rdi, stack_offset stack_index);
-      ]
-  | Lst [ Sym "newline" ] ->
-      [
-        Mov (stack_offset stack_index, Reg Rdi);
-        Add (Reg Rsp, Imm (align_stack_index stack_index));
-        Call "print_newline";
-        Sub (Reg Rsp, Imm (align_stack_index stack_index));
-        Mov (Reg Rdi, stack_offset stack_index);
-      ]
-  | Lst [ Sym "print"; e ] ->
-      compile_exp defns env stack_index e false
-      @ [
-          Mov (stack_offset stack_index, Reg Rdi);
-          Add (Reg Rsp, Imm (align_stack_index stack_index));
-          Mov (Reg Rdi, Reg Rax);
-          Call "print_value";
-          Sub (Reg Rsp, Imm (align_stack_index stack_index));
-          Mov (Reg Rdi, stack_offset stack_index);
-        ]
-  | Lst (Sym "do" :: exprs) ->
-      List.mapi
-        (fun i e ->
-          compile_exp defns env stack_index e
-            (if i = List.length exprs - 1 then is_tail else false))
-        exprs
-      |> List.concat
-  | _ -> failwith "i dont know"
+      else raise (Error.Stuck (s_exp_of_expr e))
+  | Call _ as e -> raise (Error.Stuck (s_exp_of_expr e))
+  | Prim0 f as exp -> compile_0ary_primitive stack_index exp f
+  | Prim1 (f, arg) as exp ->
+      compile_expr defns tab stack_index arg
+      @ compile_unary_primitive stack_index exp f
+  | Prim2 (f, arg1, arg2) as exp ->
+      compile_expr defns tab stack_index arg1
+      @ [ Mov (stack_address stack_index, Reg Rax) ]
+      @ compile_expr defns tab (stack_index - 8) arg2
+      @ compile_binary_primitive stack_index exp f
 
-(* puts e1, e2 into rax, r8*)
-and compile_binop defns env stack_index e1 e2 =
-  compile_exp defns env stack_index e1 false
-  @ [ Mov (stack_offset stack_index, Reg Rax) ]
-  @ compile_exp defns env (stack_index - 8) e2 false
-  @ [ Mov (Reg R8, Reg Rax) ] (* we have to flip the args for sub *)
-  @ [ Mov (Reg Rax, stack_offset stack_index) ]
-
-let compile_defn defns defn =
-  let env =
-    defn.args |> List.mapi (fun i arg -> (arg, -8 * (i + 1))) |> Symtab.of_list
+(** [compile_defn defns defn] produces X86-64 instructions for the function
+    definition [defn] **)
+let compile_defn (defns : defn list) defn : directive list =
+  let ftab =
+    defn.args |> List.mapi (fun i arg -> (arg, (i + 1) * -8)) |> Symtab.of_list
   in
-  let stack_index = -8 * (List.length defn.args + 1) in
   [ Label (function_label defn.name) ]
-  @ compile_exp defns env stack_index defn.body true
+  @ compile_expr defns ftab ((List.length defn.args + 1) * -8) defn.body
   @ [ Ret ]
 
-let compile (program : s_exp list) : directive list =
-  let defns, body = defns_and_body program in
-  let body_directives = compile_exp defns Symtab.empty (-8) body true in
+(** [compile] produces X86-64 instructions, including frontmatter, for the
+    expression [e] *)
+let compile (prog : program) =
   [
-    Extern "error";
-    Extern "read_num";
-    Extern "print_newline";
-    Extern "print_value";
     Global "lisp_entry";
-    Label "lisp_entry";
+    Extern "lisp_error";
+    Extern "read_num";
+    Extern "print_value";
+    Extern "print_newline";
+    Section "text";
   ]
-  @ body_directives @ [ Ret ]
-  @ List.concat_map (compile_defn defns) defns
+  @ List.concat_map (compile_defn prog.defns) prog.defns
+  @ [ Label "lisp_entry" ]
+  @ compile_expr prog.defns Symtab.empty (-8) prog.body
+  @ [ Ret ]

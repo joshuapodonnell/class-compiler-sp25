@@ -1,103 +1,124 @@
-open S_exp
-open Shared.Error
-open Symtab
+open Printf
 open Util
+open Shared
+open Ast
 
-type value = Number of int | Boolean of bool | Pair of (value * value)
+(** a [value] is the runtime value of an expression *)
+type value = Num of int | Bool of bool | Pair of (value * value) | Nil
 
-let int_of_value (v : value) : int =
-  match v with Number n -> n | _ -> failwith "not a num!"
-
-let rec string_of_value (v : value) : string =
-  match v with
-  | Number n -> string_of_int n
-  | Boolean b -> string_of_bool b
-  | Pair (v1, v2) ->
-      Printf.sprintf "(pair %s %s)" (string_of_value v1) (string_of_value v2)
+type environment = value Symtab.symtab
 
 let input_channel = ref stdin
 let output_channel = ref stdout
 
-let rec interp_exp (defns : defn list) (env : value symtab) (exp : s_exp) :
-    value =
-  (* interp2 is a helper to force the evaluation of 2 exprs in order *)
-  let interp2 defns env e1 e2 =
-    let v1 = interp_exp defns env e1 in
-    let v2 = interp_exp defns env e2 in
-    (v1, v2)
-  in
-  match exp with
-  | Num n -> Number n
-  | Sym "false" -> Boolean false
-  | Sym "true" -> Boolean true
-  | Sym var -> Symtab.find var env
-  | Lst (Sym f :: args) when is_defn defns f ->
+(** [display_value v] returns a string representation of the runtime value [v]
+*)
+let rec display_value = function
+  | Num x -> sprintf "%d" x
+  | Bool b -> if b then "true" else "false"
+  | Pair (v1, v2) ->
+      sprintf "(pair %s %s)" (display_value v1) (display_value v2)
+  | Nil -> "()"
+
+let interp_0ary_primitive prim =
+  match prim with
+  | ReadNum -> Some (Num (input_line !input_channel |> int_of_string))
+  | Newline ->
+      output_string !output_channel "\n";
+      Some (Bool true)
+
+(** [interp_unary_primitive prim arg] tries to evaluate the primitive operation
+    [prim] on the argument [arg]. If the operation is ill-typed, or if [prim]
+    does not refer to a valid primitive operation, it returns None.*)
+let interp_unary_primitive prim arg =
+  match (prim, arg) with
+  | Add1, Num x -> Some (Num (x + 1))
+  | Sub1, Num x -> Some (Num (x - 1))
+  | IsZero, Num 0 -> Some (Bool true)
+  | IsZero, _ -> Some (Bool false)
+  | IsNum, Num _ -> Some (Bool true)
+  | IsNum, _ -> Some (Bool false)
+  | Not, Bool false -> Some (Bool true)
+  | Not, _ -> Some (Bool false)
+  | IsPair, Pair _ -> Some (Bool true)
+  | IsPair, _ -> Some (Bool false)
+  | Left, Pair (v, _) -> Some v
+  | Right, Pair (_, v) -> Some v
+  | IsEmpty, Nil -> Some (Bool true)
+  | IsEmpty, _ -> Some (Bool false)
+  | Print, v ->
+      v |> display_value |> output_string !output_channel;
+      Some (Bool true)
+  | _ -> None
+
+(** [interp_binary_primitive prim arg1 arg2] tries to evaluate the primitive
+    operation [prim] on the arguments [arg] and [arg2]. If the operation is
+    ill-typed, or if [prim] does not refer to a valid primitive operation, it
+    returns None.*)
+let interp_binary_primitive prim arg1 arg2 =
+  match (prim, arg1, arg2) with
+  | Plus, Num x1, Num x2 -> Some (Num (x1 + x2))
+  | Minus, Num x1, Num x2 -> Some (Num (x1 - x2))
+  | Eq, Num x1, Num x2 -> Some (Bool (x1 = x2))
+  | Lt, Num x1, Num x2 -> Some (Bool (x1 < x2))
+  | Pair, v1, v2 -> Some (Pair (v1, v2))
+  | _ -> None
+
+let rec interp_expr (defns : defn list) (env : environment) : expr -> value =
+  function
+  | Num x -> Num x
+  | Var var as e -> (
+      match Symtab.find_opt var env with
+      | Some value -> value
+      | None -> raise (Error.Stuck (s_exp_of_expr e)))
+  | Nil -> Nil
+  | Let (var, exp, body) ->
+      let env = env |> Symtab.add var (interp_expr defns env exp) in
+      interp_expr defns env body
+  | If (test_exp, then_exp, else_exp) ->
+      if interp_expr defns env test_exp <> Bool false then
+        interp_expr defns env then_exp
+      else interp_expr defns env else_exp
+  | Do exps -> exps |> List.rev_map (interp_expr defns env) |> List.hd
+  | Call (f, args) as e when is_defn defns f ->
       let defn = get_defn defns f in
       if List.length args = List.length defn.args then
-        let vals = List.map (interp_exp defns env) args in
-        let pairs = List.combine defn.args vals in
-        let fenv = Symtab.of_list pairs in
-        interp_exp defns fenv defn.body
-      else failwith "wrong number of args"
-  | Lst [ Sym "let"; Lst [ Lst [ Sym var; e ] ]; e_body ] ->
-      let e_value = interp_exp defns env e in
-      interp_exp defns (Symtab.add var e_value env) e_body
-  | Lst [ Sym "add1"; l ] -> Number (int_of_value (interp_exp defns env l) + 1)
-  | Lst [ Sym "sub1"; l ] -> Number (int_of_value (interp_exp defns env l) - 1)
-  | Lst [ Sym "not"; l ] ->
-      if interp_exp defns env l = Boolean false then Boolean true
-      else Boolean false
-  | Lst [ Sym "zero?"; l ] ->
-      if interp_exp defns env l = Number 0 then Boolean true else Boolean false
-  | Lst [ Sym "num?"; l ] -> (
-      match interp_exp defns env l with
-      | Number _ -> Boolean true
-      | _ -> Boolean false)
-  | Lst [ Sym "if"; e_cond; e_then; e_else ] ->
-      let v_cond = interp_exp defns env e_cond in
-      if v_cond = Boolean false then interp_exp defns env e_else
-      else interp_exp defns env e_then
-  | Lst [ Sym "+"; e1; e2 ] ->
-      let v1, v2 = interp2 defns env e1 e2 in
-      Number (int_of_value v1 + int_of_value v2)
-  | Lst [ Sym "-"; e1; e2 ] ->
-      let v1, v2 = interp2 defns env e1 e2 in
-      Number (int_of_value v1 - int_of_value v2)
-  | Lst [ Sym "="; e1; e2 ] -> (
-      match interp2 defns env e1 e2 with
-      | Number n1, Number n2 -> Boolean (n1 = n2)
-      | _ -> raise (Stuck exp))
-  | Lst [ Sym "<"; e1; e2 ] -> (
-      match interp2 defns env e1 e2 with
-      | Number n1, Number n2 -> Boolean (n1 < n2)
-      | _ -> raise (Stuck exp))
-  | Lst [ Sym "pair"; e1; e2 ] -> Pair (interp2 defns env e1 e2)
-  | Lst [ Sym "left"; e ] -> (
-      match interp_exp defns env e with
-      | Pair (v, _) -> v
-      | _ -> failwith "not a pair")
-  | Lst [ Sym "right"; e ] -> (
-      match interp_exp defns env e with
-      | Pair (_, v) -> v
-      | _ -> failwith "not a pair")
-  | Lst [ Sym "read-num" ] -> Number (input_line !input_channel |> int_of_string)
-  | Lst [ Sym "print"; e ] ->
-      let v = interp_exp defns env e in
-      output_string !output_channel (string_of_value v);
-      Boolean true
-  | Lst [ Sym "newline" ] ->
-      output_string !output_channel "\n";
-      Boolean true
-  | Lst (Sym "do" :: exprs) ->
-      List.map (interp_exp defns env) exprs |> ignore;
-      Boolean true
-  | _ -> raise (Stuck exp)
+        let fenv =
+          args
+          |> List.map (interp_expr defns env)
+          |> List.combine defn.args |> Symtab.of_list
+        in
+        interp_expr defns fenv defn.body
+      else raise (Error.Stuck (s_exp_of_expr e))
+  | Call _ as e -> raise (Error.Stuck (s_exp_of_expr e))
+  | Prim0 f as e -> (
+      match interp_0ary_primitive f with
+      | Some v -> v
+      | None -> raise (Error.Stuck (s_exp_of_expr e)))
+  | Prim1 (f, arg) as e -> (
+      match interp_unary_primitive f (interp_expr defns env arg) with
+      | Some v -> v
+      | None -> raise (Error.Stuck (s_exp_of_expr e)))
+  | Prim2 (f, arg1, arg2) as e -> (
+      match
+        let v1 = interp_expr defns env arg1 in
+        let v2 = interp_expr defns env arg2 in
+        interp_binary_primitive f v1 v2
+      with
+      | Some v -> v
+      | None -> raise (Error.Stuck (s_exp_of_expr e)))
+  | True -> Bool true
+  | False -> Bool false
 
-let interp (program : s_exp list) : unit =
-  let defns, body = defns_and_body program in
-  interp_exp defns Symtab.empty body |> ignore
+(** [interp prog] evaluates the program [prog] using [interp_expr], reading
+    input from stdin and writing output to stdout. *)
+let interp (prog : program) =
+  interp_expr prog.defns Symtab.empty prog.body |> ignore
 
-let interp_io (input : string) (program : s_exp list) =
+(** [interp_io prog input] evaluates the program [prog] using [interp_expr],
+    reading input from the string [input] and returning the output as a string.
+*)
+let interp_io (prog : program) input =
   let input_pipe_ex, input_pipe_en = Unix.pipe () in
   let output_pipe_ex, output_pipe_en = Unix.pipe () in
   input_channel := Unix.in_channel_of_descr input_pipe_ex;
@@ -110,9 +131,9 @@ let interp_io (input : string) (program : s_exp list) =
   set_binary_mode_in read_output_channel false;
   output_string write_input_channel input;
   close_out write_input_channel;
-  interp program;
+  interp prog;
   close_out !output_channel;
-  let r = In_channel.input_all read_output_channel in
+  let r = input_all read_output_channel in
   input_channel := stdin;
   output_channel := stdout;
   r
