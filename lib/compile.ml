@@ -243,6 +243,7 @@ let compile_defn (defns : defn list) defn : directive list =
 (** [compile] produces X86-64 instructions, including frontmatter, for the
     expression [e] *)
 let compile (prog : program) =
+  let prog = Constantfold.fold_program prog in
   [
     Global "lisp_entry";
     Extern "lisp_error";
