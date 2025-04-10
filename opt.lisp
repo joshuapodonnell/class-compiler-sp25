@@ -1,3 +1,12 @@
+(if (< 2 (+ 2 (+ 4 (add1 5))))
+    5
+    (let ((x (+ 4 5)))
+     (+ x x)))
+
+(+ (read-num) (+ 2 2))
+
+
+
 (define (f x)
     (+ x 2))
 (print (* (f (read-num)) (f (read-num))))
@@ -21,7 +30,7 @@
 (define (g x)
     (* x 3))
 (define (f x)
-    (+ (g x) 2))
+    (+ (g x) (g x)))
 (print (* (f (read-num)) (f (read-num))))
 
 

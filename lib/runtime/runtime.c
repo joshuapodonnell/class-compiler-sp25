@@ -37,7 +37,7 @@ void print_value(uint64_t value) {
   }
 }
 
-void error() {
+void lisp_error() {
   printf("ERROR");
   exit(1);
 }
