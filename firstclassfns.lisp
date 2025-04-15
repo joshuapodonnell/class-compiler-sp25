@@ -2,6 +2,11 @@
 (define (mul2 x) (+ x x))
 (print (f mul2))
 
+
+(define (add_one x) (+ x 1))
+(define (add_two x) (+ x 2))
+(print ((left (pair add_one add_two)) 5))
+
 (define (mul2 x) (+ x x))
 (let ((newname mul2)) (print (newname 5)))
 

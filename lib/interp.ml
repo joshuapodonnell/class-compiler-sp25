@@ -4,7 +4,12 @@ open Shared
 open Ast
 
 (** a [value] is the runtime value of an expression *)
-type value = Num of int | Bool of bool | Pair of (value * value) | Nil
+type value =
+  | Num of int
+  | Bool of bool
+  | Pair of (value * value)
+  | Nil
+  | Function of string
 
 type environment = value Symtab.symtab
 
@@ -19,6 +24,7 @@ let rec display_value = function
   | Pair (v1, v2) ->
       sprintf "(pair %s %s)" (display_value v1) (display_value v2)
   | Nil -> "()"
+  | Function _ -> "<function>"
 
 let interp_0ary_primitive prim =
   match prim with
@@ -70,6 +76,7 @@ let rec interp_expr (defns : defn list) (env : environment) : expr -> value =
   | Var var as e -> (
       match Symtab.find_opt var env with
       | Some value -> value
+      | None when is_defn defns var -> Function var
       | None -> raise (Error.Stuck (s_exp_of_expr e)))
   | Nil -> Nil
   | Let (var, exp, body) ->
@@ -80,7 +87,13 @@ let rec interp_expr (defns : defn list) (env : environment) : expr -> value =
         interp_expr defns env then_exp
       else interp_expr defns env else_exp
   | Do exps -> exps |> List.rev_map (interp_expr defns env) |> List.hd
-  | Call (f, args) as e when is_defn defns f ->
+  | Call (f_expr, args) as e ->
+      let f_val = interp_expr defns env f_expr in
+      let f =
+        match f_val with
+        | Function f -> f
+        | _ -> raise (Error.Stuck (s_exp_of_expr e))
+      in
       let defn = get_defn defns f in
       if List.length args = List.length defn.args then
         let fenv =
@@ -90,7 +103,6 @@ let rec interp_expr (defns : defn list) (env : environment) : expr -> value =
         in
         interp_expr defns fenv defn.body
       else raise (Error.Stuck (s_exp_of_expr e))
-  | Call _ as e -> raise (Error.Stuck (s_exp_of_expr e))
   | Prim0 f as e -> (
       match interp_0ary_primitive f with
       | Some v -> v

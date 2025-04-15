@@ -14,6 +14,7 @@ let bool_tag = 0b0011111
 let heap_mask = 0b111
 let pair_tag = 0b010
 let nil_tag = 0b11111111
+let fn_tag = 0b110
 
 type symtab = int Symtab.symtab
 
@@ -78,6 +79,7 @@ let ensure_type mask tag op e =
 
 let ensure_num = ensure_type num_mask num_tag
 let ensure_pair = ensure_type heap_mask pair_tag
+let ensure_fn = ensure_type heap_mask fn_tag
 
 let align_stack_index (stack_index : int) : int =
   if stack_index mod 16 = -8 then stack_index else stack_index - 8
@@ -181,6 +183,8 @@ let rec compile_expr (defns : defn list) (tab : symtab) (stack_index : int) :
   | False -> [ Mov (Reg Rax, operand_of_bool false) ]
   | Var var when Symtab.mem var tab ->
       [ Mov (Reg Rax, stack_address (Symtab.find var tab)) ]
+  | Var var when is_defn defns var ->
+      [ LeaLabel (Reg Rax, var); Or (Reg Rax, Imm fn_tag) ]
   | Var _ as e -> raise (Error.Stuck (s_exp_of_expr e))
   | Nil -> [ Mov (Reg Rax, operand_of_nil) ]
   | If (test_expr, then_expr, else_expr) ->
@@ -201,8 +205,9 @@ let rec compile_expr (defns : defn list) (tab : symtab) (stack_index : int) :
           (Symtab.add var stack_index tab)
           (stack_index - 8) body
   | Do exps -> List.concat_map (compile_expr defns tab stack_index) exps
-  | Call (f, args) as e when is_defn defns f ->
+  | Call (f, args) as e ->
       let stack_base = align_stack_index (stack_index + 8) in
+      let compiled_f = compile_expr defns tab todo f in
       let defn = get_defn defns f in
       if List.length args = List.length defn.args then
         let compiled_args =
@@ -212,10 +217,11 @@ let rec compile_expr (defns : defn list) (tab : symtab) (stack_index : int) :
                  @ [ Mov (stack_address (stack_base - ((i + 2) * 8)), Reg Rax) ])
           |> List.concat
         in
-        compiled_args
+        compiled_args @ compiled_f @ ensure_fn (Reg Rax) e
+        @ [ Sub (Reg Rax, Imm fn_tag) ]
         @ [
             Add (Reg Rsp, Imm stack_base);
-            Call (function_label f);
+            Call (Reg Rax);
             Sub (Reg Rsp, Imm stack_base);
           ]
       else raise (Error.Stuck (s_exp_of_expr e))
@@ -236,7 +242,7 @@ let compile_defn (defns : defn list) defn : directive list =
   let ftab =
     defn.args |> List.mapi (fun i arg -> (arg, (i + 1) * -8)) |> Symtab.of_list
   in
-  [ Label (function_label defn.name) ]
+  [ Align 8; Label (function_label defn.name) ]
   @ compile_expr defns ftab ((List.length defn.args + 1) * -8) defn.body
   @ [ Ret ]
 
