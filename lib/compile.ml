@@ -184,7 +184,7 @@ let rec compile_expr (defns : defn list) (tab : symtab) (stack_index : int) :
   | Var var when Symtab.mem var tab ->
       [ Mov (Reg Rax, stack_address (Symtab.find var tab)) ]
   | Var var when is_defn defns var ->
-      [ LeaLabel (Reg Rax, var); Or (Reg Rax, Imm fn_tag) ]
+      [ LeaLabel (Reg Rax, function_label var); Or (Reg Rax, Imm fn_tag) ]
   | Var _ as e -> raise (Error.Stuck (s_exp_of_expr e))
   | Nil -> [ Mov (Reg Rax, operand_of_nil) ]
   | If (test_expr, then_expr, else_expr) ->
@@ -207,25 +207,24 @@ let rec compile_expr (defns : defn list) (tab : symtab) (stack_index : int) :
   | Do exps -> List.concat_map (compile_expr defns tab stack_index) exps
   | Call (f, args) as e ->
       let stack_base = align_stack_index (stack_index + 8) in
-      let compiled_f = compile_expr defns tab todo f in
-      let defn = get_defn defns f in
-      if List.length args = List.length defn.args then
-        let compiled_args =
-          args
-          |> List.mapi (fun i arg ->
-                 compile_expr defns tab (stack_base - ((i + 2) * 8)) arg
-                 @ [ Mov (stack_address (stack_base - ((i + 2) * 8)), Reg Rax) ])
-          |> List.concat
-        in
-        compiled_args @ compiled_f @ ensure_fn (Reg Rax) e
-        @ [ Sub (Reg Rax, Imm fn_tag) ]
-        @ [
-            Add (Reg Rsp, Imm stack_base);
-            Call (Reg Rax);
-            Sub (Reg Rsp, Imm stack_base);
-          ]
-      else raise (Error.Stuck (s_exp_of_expr e))
-  | Call _ as e -> raise (Error.Stuck (s_exp_of_expr e))
+      let stack_after_args = stack_base - ((List.length args + 2) * 8) in
+      let compiled_f = compile_expr defns tab stack_after_args f in
+      (* NOTE: we aren't checking function argument lengths anymore!
+         this is bad, but you know how to do dynamic arity checking now :) *)
+      let compiled_args =
+        args
+        |> List.mapi (fun i arg ->
+               compile_expr defns tab (stack_base - ((i + 2) * 8)) arg
+               @ [ Mov (stack_address (stack_base - ((i + 2) * 8)), Reg Rax) ])
+        |> List.concat
+      in
+      compiled_args @ compiled_f @ ensure_fn (Reg Rax) e
+      @ [ Sub (Reg Rax, Imm fn_tag) ]
+      @ [
+          Add (Reg Rsp, Imm stack_base);
+          ComputedCall (Reg Rax);
+          Sub (Reg Rsp, Imm stack_base);
+        ]
   | Prim0 f as exp -> compile_0ary_primitive stack_index exp f
   | Prim1 (f, arg) as exp ->
       compile_expr defns tab stack_index arg
