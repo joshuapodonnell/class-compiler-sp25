@@ -9,7 +9,7 @@ type value =
   | Bool of bool
   | Pair of (value * value)
   | Nil
-  | Function of string
+  | Function of (string * value Symtab.symtab)
 
 type environment = value Symtab.symtab
 
@@ -76,8 +76,9 @@ let rec interp_expr (defns : defn list) (env : environment) : expr -> value =
   | Var var as e -> (
       match Symtab.find_opt var env with
       | Some value -> value
-      | None when is_defn defns var -> Function var
+      | None when is_defn defns var -> Function (var, Symtab.empty)
       | None -> raise (Error.Stuck (s_exp_of_expr e)))
+  | Closure f -> Function (f, env)
   | Nil -> Nil
   | Let (var, exp, body) ->
       let env = env |> Symtab.add var (interp_expr defns env exp) in
@@ -89,9 +90,9 @@ let rec interp_expr (defns : defn list) (env : environment) : expr -> value =
   | Do exps -> exps |> List.rev_map (interp_expr defns env) |> List.hd
   | Call (f_expr, args) as e ->
       let f_val = interp_expr defns env f_expr in
-      let f =
+      let f, f_env =
         match f_val with
-        | Function f -> f
+        | Function (f, f_env) -> (f, f_env)
         | _ -> raise (Error.Stuck (s_exp_of_expr e))
       in
       let defn = get_defn defns f in
@@ -121,10 +122,12 @@ let rec interp_expr (defns : defn list) (env : environment) : expr -> value =
       | None -> raise (Error.Stuck (s_exp_of_expr e)))
   | True -> Bool true
   | False -> Bool false
+  | Lambda _ -> failwith "shouldn't be here"
 
 (** [interp prog] evaluates the program [prog] using [interp_expr], reading
     input from stdin and writing output to stdout. *)
 let interp (prog : program) =
+  let prog = desugar_program prog in
   interp_expr prog.defns Symtab.empty prog.body |> ignore
 
 (** [interp_io prog input] evaluates the program [prog] using [interp_expr],

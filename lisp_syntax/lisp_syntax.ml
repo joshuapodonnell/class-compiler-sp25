@@ -35,6 +35,10 @@ let prim2_of_string : string -> prim2 option =
   | "pair" -> Some Pair
   | _ -> None
 
+let get_sym : s_exp -> string = function
+  | Sym s -> s
+  | _ -> failwith "not a sym"
+
 let rec expr_of_s_exp : s_exp -> expr =
  fun s_exp ->
   match s_exp with
@@ -58,6 +62,8 @@ let rec expr_of_s_exp : s_exp -> expr =
         ( Option.get (prim2_of_string prim),
           expr_of_s_exp arg1,
           expr_of_s_exp arg2 )
+  | Lst [ Sym "lambda"; Lst args; body ] ->
+      Lambda (List.map get_sym args, expr_of_s_exp body)
   | Lst (f :: args) -> Call (expr_of_s_exp f, List.map expr_of_s_exp args)
   | e -> raise (ParseError e)
 

@@ -11,6 +11,7 @@
 (define (map f l)
   (if (not l) l
   (pair (f (left l)) (map f (right l)))))
+
 (define (g x) (+ x 1))
 
 (do 
@@ -21,4 +22,4 @@
   (let ((newname mul2)) 
    (print (newname 5)))
   (newline)
-  (print (map g (range 0 4))))
+  (print (map (lambda (x) (+ x 1)) (range 0 4))))

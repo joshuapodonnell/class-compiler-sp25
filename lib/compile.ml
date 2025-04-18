@@ -234,6 +234,7 @@ let rec compile_expr (defns : defn list) (tab : symtab) (stack_index : int) :
       @ [ Mov (stack_address stack_index, Reg Rax) ]
       @ compile_expr defns tab (stack_index - 8) arg2
       @ compile_binary_primitive stack_index exp f
+  | Lambda _ -> failwith "shouldn't be here"
 
 (** [compile_defn defns defn] produces X86-64 instructions for the function
     definition [defn] **)
@@ -248,6 +249,7 @@ let compile_defn (defns : defn list) defn : directive list =
 (** [compile] produces X86-64 instructions, including frontmatter, for the
     expression [e] *)
 let compile (prog : program) =
+  let prog = desugar_program prog in
   let prog = Constantfold.fold_program prog in
   [
     Global "lisp_entry";
