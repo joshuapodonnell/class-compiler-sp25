@@ -88,22 +88,19 @@ let rec interp_expr (defns : defn list) (env : environment) : expr -> value =
         interp_expr defns env then_exp
       else interp_expr defns env else_exp
   | Do exps -> exps |> List.rev_map (interp_expr defns env) |> List.hd
-  | Call (f_expr, args) as e ->
+  | Call (f_expr, args) as e -> (
       let f_val = interp_expr defns env f_expr in
-      let f, f_env =
-        match f_val with
-        | Function (f, f_env) -> (f, f_env)
-        | _ -> raise (Error.Stuck (s_exp_of_expr e))
-      in
-      let defn = get_defn defns f in
-      if List.length args = List.length defn.args then
-        let fenv =
-          args
-          |> List.map (interp_expr defns env)
-          |> List.combine defn.args |> Symtab.of_list
-        in
-        interp_expr defns fenv defn.body
-      else raise (Error.Stuck (s_exp_of_expr e))
+      let vals = List.map (interp_expr defns env) args in
+      match f_val with
+      | Function (f, closed_env) ->
+          let defn = get_defn defns f in
+          if List.length args = List.length defn.args then
+            let fenv =
+              vals |> List.combine defn.args |> Symtab.add_list closed_env
+            in
+            interp_expr defns fenv defn.body
+          else raise (Error.Stuck (s_exp_of_expr e))
+      | _ -> raise (Error.Stuck (s_exp_of_expr e)))
   | Prim0 f as e -> (
       match interp_0ary_primitive f with
       | Some v -> v
