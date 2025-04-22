@@ -175,6 +175,17 @@ let compile_binary_primitive stack_index e = function
 let align n alignment =
   if n mod alignment = 0 then n else n + (alignment - (n mod alignment))
 
+let rec fv (bound : string list) (exp : expr) : string list =
+  match exp with
+  | Var s when not (List.mem s bound) -> [ s ]
+  | Prim1 (_p, e) -> fv bound e
+  | Prim2 (_p, e1, e2) -> fv bound e1 @ fv bound e2
+  | If (a, b, c) -> fv bound a @ fv bound b @ fv bound c
+  | Call (a, b) -> fv bound a @ List.concat_map (fv bound) b
+  | Let (v, e, body) -> fv bound e @ fv (v :: bound) body
+  | Do es -> List.concat_map (fv bound) es
+  | _ -> []
+
 (** [compile_expr e] produces X86-64 instructions for the expression [e] *)
 let rec compile_expr (defns : defn list) (tab : symtab) (stack_index : int) :
     expr -> directive list = function
@@ -184,8 +195,37 @@ let rec compile_expr (defns : defn list) (tab : symtab) (stack_index : int) :
   | Var var when Symtab.mem var tab ->
       [ Mov (Reg Rax, stack_address (Symtab.find var tab)) ]
   | Var var when is_defn defns var ->
-      [ LeaLabel (Reg Rax, function_label var); Or (Reg Rax, Imm fn_tag) ]
+      [
+        LeaLabel (Reg Rax, function_label var);
+        Mov (MemOffset (Reg Rdi, Imm 0), Reg Rax);
+        Mov (Reg Rax, Reg Rdi);
+        Or (Reg Rax, Imm fn_tag);
+        Add (Reg Rdi, Imm 8);
+      ]
   | Var _ as e -> raise (Error.Stuck (s_exp_of_expr e))
+  | Closure f ->
+      let defn = get_defn defns f in
+      let bound = List.map (fun d -> d.name) defns @ defn.args in
+      let fvs = fv bound defn.body in
+      let fv_movs =
+        List.mapi
+          (fun i var ->
+            [
+              Mov (Reg Rax, stack_address (Symtab.find var tab));
+              Mov (MemOffset (Reg Rdi, Imm (8 * (i + 1))), Reg Rax);
+            ])
+          fvs
+      in
+      [
+        LeaLabel (Reg Rax, function_label f);
+        Mov (MemOffset (Reg Rdi, Imm 0), Reg Rax);
+      ]
+      @ List.concat fv_movs
+      @ [
+          Mov (Reg Rax, Reg Rdi);
+          Or (Reg Rax, Imm fn_tag);
+          Add (Reg Rdi, Imm (8 * (List.length fvs + 1)));
+        ]
   | Nil -> [ Mov (Reg Rax, operand_of_nil) ]
   | If (test_expr, then_expr, else_expr) ->
       let then_label = gensym "then" in
@@ -219,7 +259,12 @@ let rec compile_expr (defns : defn list) (tab : symtab) (stack_index : int) :
         |> List.concat
       in
       compiled_args @ compiled_f @ ensure_fn (Reg Rax) e
-      @ [ Sub (Reg Rax, Imm fn_tag) ]
+      @ [
+          Mov
+            (stack_address (stack_base - (8 * (List.length args + 2))), Reg Rax);
+          Sub (Reg Rax, Imm fn_tag);
+          Mov (Reg Rax, MemOffset (Reg Rax, Imm 0));
+        ]
       @ [
           Add (Reg Rsp, Imm stack_base);
           ComputedCall (Reg Rax);
@@ -239,11 +284,31 @@ let rec compile_expr (defns : defn list) (tab : symtab) (stack_index : int) :
 (** [compile_defn defns defn] produces X86-64 instructions for the function
     definition [defn] **)
 let compile_defn (defns : defn list) defn : directive list =
+  let bound = List.map (fun d -> d.name) defns @ defn.args in
+  let fvs = fv bound defn.body in
   let ftab =
-    defn.args |> List.mapi (fun i arg -> (arg, (i + 1) * -8)) |> Symtab.of_list
+    defn.args @ fvs
+    |> List.mapi (fun i arg -> (arg, (i + 1) * -8))
+    |> Symtab.of_list
+  in
+  let fv_movs =
+    [
+      Mov (Reg Rax, stack_address (-8 * (List.length defn.args + 1)));
+      Sub (Reg Rax, Imm fn_tag);
+      Add (Reg Rax, Imm 8);
+    ]
+    @ List.concat
+        (List.mapi
+           (fun i _ ->
+             [
+               Mov (Reg R8, MemOffset (Reg Rax, Imm (i * 8)));
+               Mov (stack_address (-8 * (List.length defn.args + 1 + i)), Reg R8);
+             ])
+           fvs)
   in
   [ Align 8; Label (function_label defn.name) ]
-  @ compile_expr defns ftab ((List.length defn.args + 1) * -8) defn.body
+  @ fv_movs
+  @ compile_expr defns ftab ((Symtab.cardinal ftab + 1) * -8) defn.body
   @ [ Ret ]
 
 (** [compile] produces X86-64 instructions, including frontmatter, for the
