@@ -2,6 +2,7 @@ open Printf
 open Util
 open Shared
 open Ast
+open Typecheck
 
 (** a [value] is the runtime value of an expression *)
 type value =
@@ -124,6 +125,7 @@ let rec interp_expr (defns : defn list) (env : environment) : expr -> value =
 (** [interp prog] evaluates the program [prog] using [interp_expr], reading
     input from stdin and writing output to stdout. *)
 let interp (prog : program) =
+  typecheck prog;
   let prog = desugar_program prog in
   interp_expr prog.defns Symtab.empty prog.body |> ignore
 

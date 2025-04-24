@@ -2,6 +2,7 @@ open Util
 open Shared
 open Directive
 open Ast
+open Typecheck
 
 (** constants used for tagging values at runtime *)
 let num_shift = 2
@@ -314,6 +315,7 @@ let compile_defn (defns : defn list) defn : directive list =
 (** [compile] produces X86-64 instructions, including frontmatter, for the
     expression [e] *)
 let compile (prog : program) =
+  typecheck prog;
   let prog = desugar_program prog in
   let prog = Constantfold.fold_program prog in
   [
