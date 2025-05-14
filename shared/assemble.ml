@@ -54,8 +54,6 @@ let link object_file runtime_file binary_file =
   let disable_pie = if macos () then "-Wl,-no_pie" else "-no-pie" in
   run "gcc"
     [
-      "-arch";
-      "x86_64";
       disable_pie;
       object_file;
       runtime_file;

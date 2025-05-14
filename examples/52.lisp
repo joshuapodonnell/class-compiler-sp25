@@ -1,0 +1,5 @@
+(define (min x y)
+(if (< x y) x y))
+(define (f x)
+(min 13 (add1 x)))
+(print (f 12))

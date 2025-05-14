@@ -1,0 +1,8 @@
+(define (func1) 
+    (let ((x 7)) 
+        (lambda () x)
+    )
+) 
+(let ((func2 (func1))) 
+    (print (func2))
+)
